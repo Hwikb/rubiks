@@ -15,7 +15,7 @@
     user-select: none;
     -webkit-user-select: none;
   }
-  canvas { display: block; }
+  canvas { display: block; touch-action: none; }
 
   #toolbar {
     position: fixed;
@@ -90,12 +90,39 @@
     pointer-events: none;
     z-index: 5;
     text-align: center;
+    animation: hintFade 0.5s 4s forwards;
+  }
+  @keyframes hintFade {
+    to { opacity: 0; }
+  }
+
+  /* Mobile tweaks */
+  @media (max-width: 600px) {
+    #hint {
+      font-size: 11px;
+      top: 12px;
+      white-space: nowrap;
+    }
+    #toolbar {
+      bottom: 16px;
+      gap: 5px;
+      padding: 8px 12px;
+      border-radius: 12px;
+    }
+    #toolbar button {
+      padding: 6px 10px;
+      font-size: 11px;
+      border-radius: 8px;
+    }
+    #toolbar .separator {
+      margin: 0 3px;
+    }
   }
 </style>
 </head>
 <body>
 
-<div id="hint">Drag to orbit &bull; Click rotates clockwise &bull; Right-click rotates counter-clockwise</div>
+<div id="hint">Drag to orbit &bull; Tap face to rotate &bull; Swipe face to turn</div>
 
 <div id="toolbar">
   <button onclick="doMove('R')"  title="Right clockwise">R</button>
@@ -651,6 +678,8 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
     if (info) {
       swipeLayerInfo = info;
       highlightLayer(info.axis, info.layer);
+      // Immediately disable orbit so touch gestures control the face, not the camera
+      controls.enabled = false;
     }
   }
 });
@@ -688,6 +717,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
     }
     pointerMoved = true;
     unhighlightLayer();
+    controls.enabled = true; // orbit drag on background
     return;
   }
 
@@ -711,7 +741,11 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     return;
   }
 
-  if (pointerMoved) return; // orbit drag, nothing to do
+  if (pointerMoved) {
+    // orbit drag — re-enable controls if we disabled them on cubie touch
+    controls.enabled = true;
+    return;
+  }
   if (currentAnim) return;
 
   // Tap to rotate
@@ -724,6 +758,10 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     queueMove({ axis: swipeLayerInfo.axis, layer: swipeLayerInfo.layer, angle });
     unhighlightLayer();
     swipeLayerInfo = null;
+    controls.enabled = true;
+  } else {
+    // Tapped empty area — re-enable orbit
+    controls.enabled = true;
   }
 });
 
@@ -738,6 +776,7 @@ renderer.domElement.addEventListener('pointerleave', () => {
   unhighlightLayer();
   pointerDown = false;
   swipeLayerInfo = null;
+  controls.enabled = true;
 });
 
 // Prevent browser context menu on canvas (for right-click rotate)
