@@ -232,6 +232,8 @@ const FACE_CONFIG = [
 // ───────────────── Build Cubies ─────────────────
 const cubies = [];
 const clickTargets = [];
+const stickerTargets = [];
+const bodyTargets = [];
 
 const bodyGeo = new THREE.BoxGeometry(0.85, 0.85, 0.85);
 
@@ -268,6 +270,7 @@ for (let gx = -1; gx <= 1; gx++) {
       group.userData.bodyMesh = body;
       group.add(body);
       clickTargets.push(body);
+      bodyTargets.push(body);
 
       // Stickers — only on faces exposed at this grid position
       if (gx ===  1) addSticker(group, FACE_CONFIG[0]);
@@ -295,6 +298,7 @@ function addSticker(group, face) {
   sticker.userData.cubieGroup = group;
   group.add(sticker);
   clickTargets.push(sticker);
+  stickerTargets.push(sticker);
 }
 
 // ───────────────── White center text ─────────────────
@@ -338,6 +342,7 @@ textSticker.rotation.set(-Math.PI / 2, 0, 0);
 textSticker.userData.cubieGroup = whiteCenter;
 whiteCenter.add(textSticker);
 clickTargets.push(textSticker);
+stickerTargets.push(textSticker);
 
 // ───────────────── Animation State ─────────────────
 let currentAnim = null;
@@ -512,10 +517,7 @@ let highlightedCubies = [];
 
 // Shared: determine layer from a raycaster hit
 function getLayerInfo(hit) {
-  const normal = hit.face.normal.clone();
-  normal.transformDirection(hit.object.matrixWorld);
-  normal.round();
-
+  // Find the cubie group (walk up parent chain if needed)
   let cubieGroup = hit.object.userData.cubieGroup;
   if (!cubieGroup) {
     let obj = hit.object.parent;
@@ -526,21 +528,32 @@ function getLayerInfo(hit) {
   }
   if (!cubieGroup) return null;
 
-  const absX = Math.abs(normal.x);
-  const absY = Math.abs(normal.y);
-  const absZ = Math.abs(normal.z);
+  // Determine face by hit point position relative to cubie center.
+  // More reliable than face normals at cubie edges/corners.
+  const offset = hit.point.clone().sub(cubieGroup.position);
+  const absX = Math.abs(offset.x);
+  const absY = Math.abs(offset.y);
+  const absZ = Math.abs(offset.z);
 
-  let axis, layer;
-  if (absX > absY && absX > absZ) {
+  let axis, normalSign;
+  if (absX >= absY && absX >= absZ) {
     axis = 'x';
-    layer = Math.round(cubieGroup.position.x);
-  } else if (absY > absX && absY > absZ) {
+    normalSign = Math.sign(offset.x);
+  } else if (absY >= absZ) {
     axis = 'y';
-    layer = Math.round(cubieGroup.position.y);
+    normalSign = Math.sign(offset.y);
   } else {
     axis = 'z';
-    layer = Math.round(cubieGroup.position.z);
+    normalSign = Math.sign(offset.z);
   }
+
+  const pos = cubieGroup.position;
+  const layer = Math.round(pos[axis]);
+
+  // Reconstruct normal (needed for tap-to-rotate direction)
+  const normal = new THREE.Vector3();
+  normal[axis] = normalSign;
+
   return { axis, layer, normal };
 }
 
@@ -683,10 +696,15 @@ function hitTest(clientX, clientY) {
   interactionMouse.x = (clientX / window.innerWidth) * 2 - 1;
   interactionMouse.y = -(clientY / window.innerHeight) * 2 + 1;
   interactionRaycaster.setFromCamera(interactionMouse, camera);
-  const intersects = interactionRaycaster.intersectObjects(clickTargets);
-  if (intersects.length > 0) {
-    return getLayerInfo(intersects[0]);
-  }
+
+  // Stickers first — unambiguous about which face they belong to
+  let intersects = interactionRaycaster.intersectObjects(stickerTargets);
+  if (intersects.length > 0) return getLayerInfo(intersects[0]);
+
+  // Body fallback for gaps between stickers
+  intersects = interactionRaycaster.intersectObjects(bodyTargets);
+  if (intersects.length > 0) return getLayerInfo(intersects[0]);
+
   return null;
 }
 
