@@ -675,48 +675,46 @@ function exitSwipeMode(snapTarget) {
   requestAnimationFrame(snapAnim);
 }
 
-// ─── Listeners ───
+// ─── Interaction core ───
+// Shared logic for both touch and pointer events
 
-renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (currentAnim || swipeActive) return;
-  pointerDown = true;
-  pointerMoved = false;
-  pointerStart.set(e.clientX, e.clientY);
-  pointerLast.set(e.clientX, e.clientY);
-
-  // Raycast to detect which layer the pointer is on
-  interactionMouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-  interactionMouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+function hitTest(clientX, clientY) {
+  interactionMouse.x = (clientX / window.innerWidth) * 2 - 1;
+  interactionMouse.y = -(clientY / window.innerHeight) * 2 + 1;
   interactionRaycaster.setFromCamera(interactionMouse, camera);
   const intersects = interactionRaycaster.intersectObjects(clickTargets);
   if (intersects.length > 0) {
-    const info = getLayerInfo(intersects[0]);
-    if (info) {
-      swipeLayerInfo = info;
-      highlightLayer(info.axis, info.layer);
-      // Immediately disable orbit so touch gestures control the face, not the camera
-      controls.enabled = false;
-    }
+    return getLayerInfo(intersects[0]);
   }
-});
+  return null;
+}
 
-renderer.domElement.addEventListener('pointermove', (e) => {
-  pointerLast.set(e.clientX, e.clientY);
+function onDown(clientX, clientY) {
+  if (currentAnim || swipeActive) return;
+  pointerDown = true;
+  pointerMoved = false;
+  pointerStart.set(clientX, clientY);
+  pointerLast.set(clientX, clientY);
+
+  const info = hitTest(clientX, clientY);
+  if (info) {
+    swipeLayerInfo = info;
+    highlightLayer(info.axis, info.layer);
+    controls.enabled = false;
+  }
+}
+
+function onMove(clientX, clientY) {
+  pointerLast.set(clientX, clientY);
 
   if (!pointerDown) {
     // Hover detection (desktop)
     if (currentAnim || swipeActive) return;
-    interactionMouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-    interactionMouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-    interactionRaycaster.setFromCamera(interactionMouse, camera);
-    const intersects = interactionRaycaster.intersectObjects(clickTargets);
-    if (intersects.length > 0) {
-      const info = getLayerInfo(intersects[0]);
-      if (info) {
-        highlightLayer(info.axis, info.layer);
-        renderer.domElement.style.cursor = 'pointer';
-        return;
-      }
+    const info = hitTest(clientX, clientY);
+    if (info) {
+      highlightLayer(info.axis, info.layer);
+      renderer.domElement.style.cursor = 'pointer';
+      return;
     }
     unhighlightLayer();
     renderer.domElement.style.cursor = 'grab';
@@ -724,8 +722,8 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   }
 
   // Pointer down — check for swipe entry
-  const dx = e.clientX - pointerStart.x;
-  const dy = e.clientY - pointerStart.y;
+  const dx = clientX - pointerStart.x;
+  const dy = clientY - pointerStart.y;
   if (!swipeActive && !pointerMoved && (Math.abs(dx) > SWIPE_THRESHOLD || Math.abs(dy) > SWIPE_THRESHOLD)) {
     if (swipeLayerInfo) {
       enterSwipeMode(swipeLayerInfo.axis, swipeLayerInfo.layer);
@@ -733,21 +731,20 @@ renderer.domElement.addEventListener('pointermove', (e) => {
     }
     pointerMoved = true;
     unhighlightLayer();
-    controls.enabled = true; // orbit drag on background
+    controls.enabled = true;
     return;
   }
 
   if (swipeActive) {
     updateSwipeAngle();
   }
-});
+}
 
-renderer.domElement.addEventListener('pointerup', (e) => {
+function onUp(button) {
   if (!pointerDown) return;
   pointerDown = false;
 
   if (swipeActive) {
-    // Snap to nearest 90°
     const half = Math.PI / 4;
     const target = Math.abs(swipeAngle) > half
       ? Math.sign(swipeAngle) * Math.PI / 2
@@ -758,7 +755,6 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   }
 
   if (pointerMoved) {
-    // orbit drag — re-enable controls if we disabled them on cubie touch
     controls.enabled = true;
     return;
   }
@@ -766,7 +762,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 
   // Tap to rotate
   if (swipeLayerInfo) {
-    const clockwise = e.button !== 2;
+    const clockwise = button !== 2;
     const sign = Math.sign(swipeLayerInfo.normal[swipeLayerInfo.axis] || 1);
     const angle = clockwise ? -sign * Math.PI / 2 : sign * Math.PI / 2;
 
@@ -776,12 +772,62 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     swipeLayerInfo = null;
     controls.enabled = true;
   } else {
-    // Tapped empty area — re-enable orbit
     controls.enabled = true;
   }
+}
+
+// ─── Pointer Events (desktop) ───
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'touch') return; // let touch handlers take over
+  onDown(e.clientX, e.clientY);
+});
+
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'touch') return;
+  onMove(e.clientX, e.clientY);
+});
+
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (e.pointerType === 'touch') return;
+  onUp(e.button);
 });
 
 renderer.domElement.addEventListener('pointerleave', () => {
+  if (swipeActive) {
+    const half = Math.PI / 4;
+    const target = Math.abs(swipeAngle) > half
+      ? Math.sign(swipeAngle) * Math.PI / 2
+      : 0;
+    exitSwipeMode(target);
+  }
+  unhighlightLayer();
+  pointerDown = false;
+  swipeLayerInfo = null;
+  controls.enabled = true;
+});
+
+// ─── Touch Events (mobile) ───
+
+renderer.domElement.addEventListener('touchstart', (e) => {
+  if (e.touches.length !== 1) return; // ignore multi-touch
+  e.preventDefault();
+  const t = e.touches[0];
+  onDown(t.clientX, t.clientY);
+}, { passive: false });
+
+renderer.domElement.addEventListener('touchmove', (e) => {
+  if (e.touches.length !== 1) return;
+  e.preventDefault();
+  const t = e.touches[0];
+  onMove(t.clientX, t.clientY);
+}, { passive: false });
+
+renderer.domElement.addEventListener('touchend', (e) => {
+  onUp(0);
+});
+
+renderer.domElement.addEventListener('touchcancel', () => {
   if (swipeActive) {
     const half = Math.PI / 4;
     const target = Math.abs(swipeAngle) > half
