@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D Rubik's Cube</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a15 100%);
+    overflow: hidden;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    height: 100vh;
+    width: 100vw;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  canvas { display: block; }
+
+  #toolbar {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+    z-index: 10;
+    padding: 12px 20px;
+    background: rgba(20, 20, 40, 0.85);
+    backdrop-filter: blur(12px);
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  }
+
+  #toolbar button {
+    padding: 8px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #ccc;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+  #toolbar button:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.35);
+  }
+  #toolbar button:active {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(0.95);
+  }
+  #toolbar button.prime {
+    color: #ff9500;
+    border-color: rgba(255, 149, 0, 0.3);
+  }
+  #toolbar button.prime:hover {
+    border-color: rgba(255, 149, 0, 0.6);
+  }
+  #toolbar button.action {
+    background: rgba(255, 149, 0, 0.15);
+    border-color: rgba(255, 149, 0, 0.4);
+    color: #ffaa33;
+  }
+  #toolbar button.action:hover {
+    background: rgba(255, 149, 0, 0.25);
+    color: #ffbb55;
+  }
+  #toolbar .separator {
+    width: 1px;
+    background: rgba(255, 255, 255, 0.15);
+    margin: 0 6px;
+    align-self: stretch;
+  }
+
+  #hint {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 13px;
+    pointer-events: none;
+    z-index: 5;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div id="hint">Drag to orbit &bull; Click rotates clockwise &bull; Right-click rotates counter-clockwise</div>
+
+<div id="toolbar">
+  <button onclick="doMove('R')"  title="Right clockwise">R</button>
+  <button class="prime" onclick="doMove(`R'`)" title="Right counter-clockwise">R'</button>
+  <button onclick="doMove('L')"  title="Left clockwise">L</button>
+  <button class="prime" onclick="doMove(`L'`)" title="Left counter-clockwise">L'</button>
+  <button onclick="doMove('U')"  title="Up clockwise">U</button>
+  <button class="prime" onclick="doMove(`U'`)" title="Up counter-clockwise">U'</button>
+  <button onclick="doMove('D')"  title="Down clockwise">D</button>
+  <button class="prime" onclick="doMove(`D'`)" title="Down counter-clockwise">D'</button>
+  <button onclick="doMove('F')"  title="Front clockwise">F</button>
+  <button class="prime" onclick="doMove(`F'`)" title="Front counter-clockwise">F'</button>
+  <button onclick="doMove('B')"  title="Back clockwise">B</button>
+  <button class="prime" onclick="doMove(`B'`)" title="Back counter-clockwise">B'</button>
+  <span class="separator"></span>
+  <button class="action" onclick="scramble()">Scramble</button>
+  <button class="action" onclick="resetView()">Reset View</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ───────────────── Scene Setup ─────────────────
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.5, 50);
+camera.position.set(5.5, 4.2, 6.8);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.appendChild(renderer.domElement);
+
+// ───────────────── Lighting ─────────────────
+scene.add(new THREE.AmbientLight(0x8899bb, 1.2));
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.5);
+keyLight.position.set(6, 10, 8);
+scene.add(keyLight);
+
+const fillLight = new THREE.DirectionalLight(0x4488cc, 0.8);
+fillLight.position.set(-4, 2, -3);
+scene.add(fillLight);
+
+const rimLight = new THREE.DirectionalLight(0xff8866, 0.6);
+rimLight.position.set(0, -3, 5);
+scene.add(rimLight);
+
+// ───────────────── Orbit Controls ─────────────────
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(0, 0, 0);
+controls.minDistance = 3;
+controls.maxDistance = 14;
+controls.maxPolarAngle = Math.PI * 0.78;
+controls.mouseButtons = {
+  LEFT: THREE.MOUSE.ROTATE,
+  MIDDLE: THREE.MOUSE.DOLLY,
+  RIGHT: null
+};
+controls.update();
+
+// ───────────────── Sticker colors ─────────────────
+const COLORS = {
+  right:  0xC41E3A, // +x Red
+  left:   0xFF5800, // -x Orange
+  up:     0xFFFFFF, // +y White
+  down:   0xFFD500, // -y Yellow
+  front:  0x009E60, // +z Green
+  back:   0x0051BA, // -z Blue
+};
+
+const FACE_CONFIG = [
+  { dir: [ 1, 0, 0], color: COLORS.right,  rot: [0, Math.PI / 2, 0] },
+  { dir: [-1, 0, 0], color: COLORS.left,   rot: [0, -Math.PI / 2, 0] },
+  { dir: [ 0, 1, 0], color: COLORS.up,     rot: [-Math.PI / 2, 0, 0] },
+  { dir: [ 0,-1, 0], color: COLORS.down,   rot: [Math.PI / 2, 0, 0] },
+  { dir: [ 0, 0, 1], color: COLORS.front,  rot: [0, 0, 0] },
+  { dir: [ 0, 0,-1], color: COLORS.back,   rot: [0, Math.PI, 0] },
+];
+
+// ───────────────── Build Cubies ─────────────────
+const cubies = [];
+const clickTargets = [];
+
+const bodyGeo = new THREE.BoxGeometry(0.85, 0.85, 0.85);
+
+function createBodyMaterial() {
+  return new THREE.MeshStandardMaterial({
+    color: 0x111111,
+    roughness: 0.4,
+    metalness: 0.05,
+  });
+}
+
+const stickerGeo = new THREE.PlaneGeometry(0.68, 0.68);
+const stickerOffset = 0.432;
+
+function createStickerMaterial(color) {
+  return new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.28,
+    metalness: 0.02,
+  });
+}
+
+for (let gx = -1; gx <= 1; gx++) {
+  for (let gy = -1; gy <= 1; gy++) {
+    for (let gz = -1; gz <= 1; gz++) {
+      if (gx === 0 && gy === 0 && gz === 0) continue; // skip core
+
+      const group = new THREE.Group();
+      group.position.set(gx, gy, gz);
+
+      // Body
+      const body = new THREE.Mesh(bodyGeo, createBodyMaterial());
+      body.userData.cubieGroup = group;
+      group.userData.bodyMesh = body;
+      group.add(body);
+      clickTargets.push(body);
+
+      // Stickers — only on faces exposed at this grid position
+      if (gx ===  1) addSticker(group, FACE_CONFIG[0]);
+      if (gx === -1) addSticker(group, FACE_CONFIG[1]);
+      if (gy ===  1) addSticker(group, FACE_CONFIG[2]);
+      if (gy === -1) addSticker(group, FACE_CONFIG[3]);
+      if (gz ===  1) addSticker(group, FACE_CONFIG[4]);
+      if (gz === -1) addSticker(group, FACE_CONFIG[5]);
+
+      scene.add(group);
+      cubies.push(group);
+    }
+  }
+}
+
+function addSticker(group, face) {
+  const mat = createStickerMaterial(face.color);
+  const sticker = new THREE.Mesh(stickerGeo, mat);
+  sticker.position.set(
+    face.dir[0] * stickerOffset,
+    face.dir[1] * stickerOffset,
+    face.dir[2] * stickerOffset
+  );
+  sticker.rotation.set(face.rot[0], face.rot[1], face.rot[2]);
+  sticker.userData.cubieGroup = group;
+  group.add(sticker);
+  clickTargets.push(sticker);
+}
+
+// ───────────────── White center text ─────────────────
+const whiteCenter = cubies.find(c => c.position.x === 0 && c.position.y === 1 && c.position.z === 0);
+
+// Remove the plain white sticker from top face
+const topStickerIdx = whiteCenter.children.findIndex(child =>
+  child.isMesh && child.material.color && child.material.color.getHex() === 0xffffff &&
+  child.position.y > 0.4
+);
+if (topStickerIdx !== -1) {
+  const oldSticker = whiteCenter.children[topStickerIdx];
+  const ctIdx = clickTargets.indexOf(oldSticker);
+  if (ctIdx !== -1) clickTargets.splice(ctIdx, 1);
+  whiteCenter.remove(oldSticker);
+}
+
+// Create canvas texture with text
+const textCanvas = document.createElement('canvas');
+textCanvas.width = 256;
+textCanvas.height = 256;
+const ctx = textCanvas.getContext('2d');
+ctx.fillStyle = '#ffffff';
+ctx.fillRect(0, 0, 256, 256);
+ctx.fillStyle = '#0051BA';
+ctx.font = 'bold 68px "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+ctx.textAlign = 'center';
+ctx.textBaseline = 'middle';
+ctx.fillText('Hwikb', 128, 132);
+
+const textTexture = new THREE.CanvasTexture(textCanvas);
+textTexture.colorSpace = THREE.SRGBColorSpace;
+const textStickerMat = new THREE.MeshStandardMaterial({
+  map: textTexture,
+  roughness: 0.3,
+  metalness: 0.02,
+});
+const textSticker = new THREE.Mesh(stickerGeo, textStickerMat);
+textSticker.position.set(0, stickerOffset, 0);
+textSticker.rotation.set(-Math.PI / 2, 0, 0);
+textSticker.userData.cubieGroup = whiteCenter;
+whiteCenter.add(textSticker);
+clickTargets.push(textSticker);
+
+// ───────────────── Animation State ─────────────────
+let currentAnim = null;
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+// ───────────────── Move System ─────────────────
+const MOVE_DEFS = {
+  'R':  { axis: 'x', layer:  1, angle: -Math.PI / 2 },
+  "R'": { axis: 'x', layer:  1, angle:  Math.PI / 2 },
+  'L':  { axis: 'x', layer: -1, angle:  Math.PI / 2 },
+  "L'": { axis: 'x', layer: -1, angle: -Math.PI / 2 },
+  'U':  { axis: 'y', layer:  1, angle: -Math.PI / 2 },
+  "U'": { axis: 'y', layer:  1, angle:  Math.PI / 2 },
+  'D':  { axis: 'y', layer: -1, angle:  Math.PI / 2 },
+  "D'": { axis: 'y', layer: -1, angle: -Math.PI / 2 },
+  'F':  { axis: 'z', layer:  1, angle: -Math.PI / 2 },
+  "F'": { axis: 'z', layer:  1, angle:  Math.PI / 2 },
+  'B':  { axis: 'z', layer: -1, angle:  Math.PI / 2 },
+  "B'": { axis: 'z', layer: -1, angle: -Math.PI / 2 },
+};
+
+function startFaceRotation(axis, layer, angle) {
+  if (currentAnim) return false;
+
+  const layerCubies = cubies.filter(c => {
+    const v = axis === 'x' ? c.position.x : axis === 'y' ? c.position.y : c.position.z;
+    return Math.abs(v - layer) < 0.15;
+  });
+
+  if (layerCubies.length === 0) return false;
+
+  const pivot = new THREE.Group();
+  scene.add(pivot);
+
+  layerCubies.forEach(c => pivot.attach(c));
+
+  currentAnim = {
+    pivot,
+    axis,
+    targetAngle: angle,
+    elapsed: 0,
+    duration: 250,
+    layerCubies,
+  };
+  return true;
+}
+
+function finishAnimation() {
+  const { pivot, layerCubies } = currentAnim;
+
+  layerCubies.forEach(c => {
+    scene.attach(c);
+    c.position.x = Math.round(c.position.x);
+    c.position.y = Math.round(c.position.y);
+    c.position.z = Math.round(c.position.z);
+  });
+
+  scene.remove(pivot);
+  currentAnim = null;
+}
+
+// ───────────────── Move Queue ─────────────────
+let moveQueue = [];
+let fastMode = false; // set true for scramble-style fast animations
+
+function queueMove(moveNameOrObj) {
+  moveQueue.push(moveNameOrObj);
+  processQueue();
+}
+
+function processQueue() {
+  if (currentAnim || moveQueue.length === 0) return;
+  const item = moveQueue.shift();
+
+  let axis, layer, angle;
+  if (typeof item === 'string') {
+    const def = MOVE_DEFS[item];
+    if (!def) return;
+    axis = def.axis;
+    layer = def.layer;
+    angle = def.angle;
+  } else {
+    axis = item.axis;
+    layer = item.layer;
+    angle = item.angle;
+  }
+
+  if (startFaceRotation(axis, layer, angle) && fastMode) {
+    currentAnim.duration = 80;
+  }
+}
+
+// ───────────────── Public API ─────────────────
+window.doMove = function(moveName) {
+  fastMode = false;
+  queueMove(moveName);
+};
+
+window.scramble = function() {
+  const moves = ['R', "R'", 'L', "L'", 'U', "U'", 'D', "D'", 'F', "F'", 'B', "B'"];
+  moveQueue = [];
+  fastMode = true;
+  for (let i = 0; i < 20; i++) {
+    moveQueue.push(moves[Math.floor(Math.random() * moves.length)]);
+  }
+  processQueue();
+};
+
+window.resetView = function() {
+  // Animate camera back to default
+  const startPos = camera.position.clone();
+  const endPos = new THREE.Vector3(5.5, 4.2, 6.8);
+  const startTarget = controls.target.clone();
+  const endTarget = new THREE.Vector3(0, 0, 0);
+  const startTime = performance.now();
+  const duration = 600;
+
+  function animReset(time) {
+    const elapsed = time - startTime;
+    const t = Math.min(elapsed / duration, 1);
+    const eased = easeInOutCubic(t);
+    camera.position.lerpVectors(startPos, endPos, eased);
+    controls.target.lerpVectors(startTarget, endTarget, eased);
+    if (t < 1) {
+      requestAnimationFrame(animReset);
+    }
+  }
+  requestAnimationFrame(animReset);
+};
+
+// ───────────────── Keyboard ─────────────────
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+
+  const key = e.key.toUpperCase();
+  const shift = e.shiftKey;
+  const moveMap = {
+    'R': shift ? "R'" : 'R',
+    'L': shift ? "L'" : 'L',
+    'U': shift ? "U'" : 'U',
+    'D': shift ? "D'" : 'D',
+    'F': shift ? "F'" : 'F',
+    'B': shift ? "B'" : 'B',
+  };
+
+  if (moveMap[key]) {
+    e.preventDefault();
+    fastMode = false;
+    queueMove(moveMap[key]);
+  }
+
+  if (key === ' ') {
+    e.preventDefault();
+    window.resetView();
+  }
+});
+
+// ───────────────── Unified Interaction ─────────────────
+const interactionRaycaster = new THREE.Raycaster();
+const interactionMouse = new THREE.Vector2();
+const highlightEmissive = new THREE.Color(0x888888);
+const highlightIntensity = 0.55;
+let highlightedCubies = [];
+
+// Shared: determine layer from a raycaster hit
+function getLayerInfo(hit) {
+  const normal = hit.face.normal.clone();
+  normal.transformDirection(hit.object.matrixWorld);
+  normal.round();
+
+  let cubieGroup = hit.object.userData.cubieGroup;
+  if (!cubieGroup) {
+    let obj = hit.object.parent;
+    while (obj && !cubieGroup) {
+      cubieGroup = obj.userData.cubieGroup;
+      obj = obj.parent;
+    }
+  }
+  if (!cubieGroup) return null;
+
+  const absX = Math.abs(normal.x);
+  const absY = Math.abs(normal.y);
+  const absZ = Math.abs(normal.z);
+
+  let axis, layer;
+  if (absX > absY && absX > absZ) {
+    axis = 'x';
+    layer = Math.round(cubieGroup.position.x);
+  } else if (absY > absX && absY > absZ) {
+    axis = 'y';
+    layer = Math.round(cubieGroup.position.y);
+  } else {
+    axis = 'z';
+    layer = Math.round(cubieGroup.position.z);
+  }
+  return { axis, layer, normal };
+}
+
+function highlightLayer(axis, layer) {
+  unhighlightLayer();
+  highlightedCubies = cubies.filter(c => {
+    const v = axis === 'x' ? c.position.x : axis === 'y' ? c.position.y : c.position.z;
+    return Math.abs(v - layer) < 0.15;
+  });
+  highlightedCubies.forEach(c => {
+    const mat = c.userData.bodyMesh.material;
+    mat.emissive = highlightEmissive;
+    mat.emissiveIntensity = highlightIntensity;
+  });
+}
+
+function unhighlightLayer() {
+  highlightedCubies.forEach(c => {
+    const mat = c.userData.bodyMesh.material;
+    mat.emissive = new THREE.Color(0x000000);
+    mat.emissiveIntensity = 0;
+  });
+  highlightedCubies = [];
+}
+
+// Compute screen-space direction that corresponds to clockwise swipe on a face
+function getClockwiseTangent(axis, layer) {
+  const faceCenter = new THREE.Vector3();
+  faceCenter[axis] = layer;
+
+  const normal = new THREE.Vector3();
+  normal[axis] = layer > 0 ? 1 : -1;
+
+  const viewDir = camera.position.clone().sub(faceCenter).normalize();
+  const right = new THREE.Vector3().crossVectors(normal, viewDir).normalize();
+
+  const p0 = faceCenter.clone();
+  const p1 = faceCenter.clone().add(right.clone().multiplyScalar(0.5));
+
+  function toScreen(v) {
+    const projected = v.clone().project(camera);
+    return new THREE.Vector2(
+      (projected.x + 1) / 2 * window.innerWidth,
+      (-projected.y + 1) / 2 * window.innerHeight
+    );
+  }
+
+  const s0 = toScreen(p0);
+  const s1 = toScreen(p1);
+  return new THREE.Vector2(s1.x - s0.x, s1.y - s0.y).normalize();
+}
+
+// ─── Pointer state ───
+let pointerDown = false;
+let pointerMoved = false;
+let pointerStart = new THREE.Vector2();
+let pointerLast = new THREE.Vector2();
+
+// ─── Swipe state ───
+let swipeActive = false;
+let swipeLayerInfo = null;
+let swipePivot = null;
+let swipeAngle = 0;
+let swipeTangent = new THREE.Vector2();
+
+const SWIPE_THRESHOLD = 5;        // px to enter swipe mode
+const PIXELS_PER_RADIAN = 220;    // swipe sensitivity
+
+function enterSwipeMode(axis, layer) {
+  if (currentAnim) return;
+
+  const layerCubies = cubies.filter(c => {
+    const v = axis === 'x' ? c.position.x : axis === 'y' ? c.position.y : c.position.z;
+    return Math.abs(v - layer) < 0.15;
+  });
+  if (layerCubies.length === 0) return;
+
+  controls.enabled = false;
+  swipeActive = true;
+  swipeAngle = 0;
+
+  swipePivot = new THREE.Group();
+  scene.add(swipePivot);
+  layerCubies.forEach(c => swipePivot.attach(c));
+
+  swipeTangent = getClockwiseTangent(axis, layer);
+}
+
+function updateSwipeAngle() {
+  const dx = pointerLast.x - pointerStart.x;
+  const dy = pointerLast.y - pointerStart.y;
+  const dot = dx * swipeTangent.x + dy * swipeTangent.y;
+  swipeAngle = THREE.MathUtils.clamp(dot / PIXELS_PER_RADIAN, -Math.PI / 2, Math.PI / 2);
+
+  swipePivot.rotation.set(0, 0, 0);
+  swipePivot.rotation[swipeLayerInfo.axis] = swipeAngle;
+}
+
+function exitSwipeMode(snapTarget) {
+  // Animate from current angle to snapTarget
+  const startAngle = swipeAngle;
+  const endAngle = snapTarget;
+  const startTime = performance.now();
+  const duration = 150;
+
+  function snapAnim(time) {
+    const elapsed = time - startTime;
+    const t = Math.min(elapsed / duration, 1);
+    const eased = easeInOutCubic(t);
+    const angle = startAngle + (endAngle - startAngle) * eased;
+
+    swipePivot.rotation.set(0, 0, 0);
+    swipePivot.rotation[swipeLayerInfo.axis] = angle;
+
+    if (t < 1) {
+      requestAnimationFrame(snapAnim);
+    } else {
+      // Detach cubies back to scene
+      const layerCubies = [...swipePivot.children];
+      layerCubies.forEach(c => {
+        scene.attach(c);
+        c.position.x = Math.round(c.position.x);
+        c.position.y = Math.round(c.position.y);
+        c.position.z = Math.round(c.position.z);
+      });
+      scene.remove(swipePivot);
+      swipePivot = null;
+      swipeActive = false;
+      swipeLayerInfo = null;
+      controls.enabled = true;
+    }
+  }
+  requestAnimationFrame(snapAnim);
+}
+
+// ─── Listeners ───
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (currentAnim || swipeActive) return;
+  pointerDown = true;
+  pointerMoved = false;
+  pointerStart.set(e.clientX, e.clientY);
+  pointerLast.set(e.clientX, e.clientY);
+
+  // Raycast to detect which layer the pointer is on
+  interactionMouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  interactionMouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  interactionRaycaster.setFromCamera(interactionMouse, camera);
+  const intersects = interactionRaycaster.intersectObjects(clickTargets);
+  if (intersects.length > 0) {
+    const info = getLayerInfo(intersects[0]);
+    if (info) {
+      swipeLayerInfo = info;
+      highlightLayer(info.axis, info.layer);
+    }
+  }
+});
+
+renderer.domElement.addEventListener('pointermove', (e) => {
+  pointerLast.set(e.clientX, e.clientY);
+
+  if (!pointerDown) {
+    // Hover detection (desktop)
+    if (currentAnim || swipeActive) return;
+    interactionMouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    interactionMouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    interactionRaycaster.setFromCamera(interactionMouse, camera);
+    const intersects = interactionRaycaster.intersectObjects(clickTargets);
+    if (intersects.length > 0) {
+      const info = getLayerInfo(intersects[0]);
+      if (info) {
+        highlightLayer(info.axis, info.layer);
+        renderer.domElement.style.cursor = 'pointer';
+        return;
+      }
+    }
+    unhighlightLayer();
+    renderer.domElement.style.cursor = 'grab';
+    return;
+  }
+
+  // Pointer down — check for swipe entry
+  const dx = e.clientX - pointerStart.x;
+  const dy = e.clientY - pointerStart.y;
+  if (!swipeActive && !pointerMoved && (Math.abs(dx) > SWIPE_THRESHOLD || Math.abs(dy) > SWIPE_THRESHOLD)) {
+    if (swipeLayerInfo) {
+      enterSwipeMode(swipeLayerInfo.axis, swipeLayerInfo.layer);
+      if (swipeActive) return;
+    }
+    pointerMoved = true;
+    unhighlightLayer();
+    return;
+  }
+
+  if (swipeActive) {
+    updateSwipeAngle();
+  }
+});
+
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!pointerDown) return;
+  pointerDown = false;
+
+  if (swipeActive) {
+    // Snap to nearest 90°
+    const half = Math.PI / 4;
+    const target = Math.abs(swipeAngle) > half
+      ? Math.sign(swipeAngle) * Math.PI / 2
+      : 0;
+    exitSwipeMode(target);
+    unhighlightLayer();
+    return;
+  }
+
+  if (pointerMoved) return; // orbit drag, nothing to do
+  if (currentAnim) return;
+
+  // Tap to rotate
+  if (swipeLayerInfo) {
+    const clockwise = e.button !== 2;
+    const sign = Math.sign(swipeLayerInfo.normal[swipeLayerInfo.axis] || 1);
+    const angle = clockwise ? -sign * Math.PI / 2 : sign * Math.PI / 2;
+
+    fastMode = false;
+    queueMove({ axis: swipeLayerInfo.axis, layer: swipeLayerInfo.layer, angle });
+    unhighlightLayer();
+    swipeLayerInfo = null;
+  }
+});
+
+renderer.domElement.addEventListener('pointerleave', () => {
+  if (swipeActive) {
+    const half = Math.PI / 4;
+    const target = Math.abs(swipeAngle) > half
+      ? Math.sign(swipeAngle) * Math.PI / 2
+      : 0;
+    exitSwipeMode(target);
+  }
+  unhighlightLayer();
+  pointerDown = false;
+  swipeLayerInfo = null;
+});
+
+// Prevent browser context menu on canvas (for right-click rotate)
+renderer.domElement.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+});
+
+// ───────────────── Animation Loop ─────────────────
+const clock = new THREE.Clock();
+
+renderer.setAnimationLoop(() => {
+  const delta = clock.getDelta() * 1000; // ms
+
+  // Update current animation
+  if (currentAnim) {
+    currentAnim.elapsed += delta;
+    const progress = Math.min(currentAnim.elapsed / currentAnim.duration, 1);
+    const eased = easeInOutCubic(progress);
+
+    currentAnim.pivot.rotation.set(0, 0, 0);
+    currentAnim.pivot.rotation[currentAnim.axis] = currentAnim.targetAngle * eased;
+
+    if (progress >= 1) {
+      finishAnimation();
+      processQueue(); // trigger next queued move
+    }
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+// ───────────────── Resize ─────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ───────────────── Touch: prevent zoom ─────────────────
+renderer.domElement.addEventListener('touchmove', (e) => {
+  if (e.target === renderer.domElement) {
+    e.preventDefault();
+  }
+}, { passive: false });
+
+console.log('🎲 Rubik\'s Cube ready! Drag to orbit, click faces to rotate, or use keyboard shortcuts.');
+</script>
+
+</body>
+</html>
