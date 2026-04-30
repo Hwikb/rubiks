@@ -296,6 +296,7 @@ function addSticker(group, face) {
   );
   sticker.rotation.set(face.rot[0], face.rot[1], face.rot[2]);
   sticker.userData.cubieGroup = group;
+  sticker.userData.faceAxis = face.dir; // unambiguous face direction
   group.add(sticker);
   clickTargets.push(sticker);
   stickerTargets.push(sticker);
@@ -528,23 +529,41 @@ function getLayerInfo(hit) {
   }
   if (!cubieGroup) return null;
 
-  // Determine face by hit point position relative to cubie center.
-  // More reliable than face normals at cubie edges/corners.
-  const offset = hit.point.clone().sub(cubieGroup.position);
-  const absX = Math.abs(offset.x);
-  const absY = Math.abs(offset.y);
-  const absZ = Math.abs(offset.z);
-
   let axis, normalSign;
-  if (absX >= absY && absX >= absZ) {
-    axis = 'x';
-    normalSign = Math.sign(offset.x);
-  } else if (absY >= absZ) {
-    axis = 'y';
-    normalSign = Math.sign(offset.y);
+
+  // Stickers know their face unambiguously — use their faceAxis
+  const faceAxis = hit.object.userData.faceAxis;
+  if (faceAxis) {
+    const absX = Math.abs(faceAxis[0]);
+    const absY = Math.abs(faceAxis[1]);
+    const absZ = Math.abs(faceAxis[2]);
+    if (absX > absY && absX > absZ) {
+      axis = 'x';
+      normalSign = Math.sign(faceAxis[0]);
+    } else if (absY > absX && absY > absZ) {
+      axis = 'y';
+      normalSign = Math.sign(faceAxis[1]);
+    } else {
+      axis = 'z';
+      normalSign = Math.sign(faceAxis[2]);
+    }
   } else {
-    axis = 'z';
-    normalSign = Math.sign(offset.z);
+    // Body mesh fallback: use hit point position relative to cubie center
+    const offset = hit.point.clone().sub(cubieGroup.position);
+    const absX = Math.abs(offset.x);
+    const absY = Math.abs(offset.y);
+    const absZ = Math.abs(offset.z);
+
+    if (absX >= absY && absX >= absZ) {
+      axis = 'x';
+      normalSign = Math.sign(offset.x);
+    } else if (absY >= absZ) {
+      axis = 'y';
+      normalSign = Math.sign(offset.y);
+    } else {
+      axis = 'z';
+      normalSign = Math.sign(offset.z);
+    }
   }
 
   const pos = cubieGroup.position;
@@ -589,6 +608,10 @@ function getClockwiseTangent(axis, layer) {
 
   const viewDir = camera.position.clone().sub(faceCenter).normalize();
   const right = new THREE.Vector3().crossVectors(normal, viewDir).normalize();
+
+  // Flip tangent for back-facing faces so the same screen swipe direction
+  // always maps to the same rotation direction across all faces.
+  if (normal.dot(viewDir) < 0) right.negate();
 
   const p0 = faceCenter.clone();
   const p1 = faceCenter.clone().add(right.clone().multiplyScalar(0.5));
