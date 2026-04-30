@@ -80,6 +80,9 @@
     align-self: stretch;
   }
 
+  #moveGroup { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  #toggleMoves { display: none; }
+
   #hint {
     position: fixed;
     top: 24px;
@@ -115,8 +118,14 @@
       border-radius: 8px;
     }
     #toolbar .separator {
-      margin: 0 3px;
+      display: none;
     }
+    #toggleMoves {
+      display: inline-block;
+      background: rgba(255, 255, 255, 0.1);
+    }
+    #moveGroup { display: none; gap: 5px; }
+    #moveGroup.open { display: flex; }
   }
 </style>
 </head>
@@ -125,18 +134,21 @@
 <div id="hint">Drag to orbit &bull; Tap face to rotate &bull; Swipe face to turn</div>
 
 <div id="toolbar">
-  <button onclick="doMove('R')"  title="Right clockwise">R</button>
-  <button class="prime" onclick="doMove(`R'`)" title="Right counter-clockwise">R'</button>
-  <button onclick="doMove('L')"  title="Left clockwise">L</button>
-  <button class="prime" onclick="doMove(`L'`)" title="Left counter-clockwise">L'</button>
-  <button onclick="doMove('U')"  title="Up clockwise">U</button>
-  <button class="prime" onclick="doMove(`U'`)" title="Up counter-clockwise">U'</button>
-  <button onclick="doMove('D')"  title="Down clockwise">D</button>
-  <button class="prime" onclick="doMove(`D'`)" title="Down counter-clockwise">D'</button>
-  <button onclick="doMove('F')"  title="Front clockwise">F</button>
-  <button class="prime" onclick="doMove(`F'`)" title="Front counter-clockwise">F'</button>
-  <button onclick="doMove('B')"  title="Back clockwise">B</button>
-  <button class="prime" onclick="doMove(`B'`)" title="Back counter-clockwise">B'</button>
+  <button id="toggleMoves" onclick="toggleMoves()">Moves</button>
+  <span id="moveGroup">
+    <button onclick="doMove('R')"  title="Right clockwise">R</button>
+    <button class="prime" onclick="doMove(`R'`)" title="Right counter-clockwise">R'</button>
+    <button onclick="doMove('L')"  title="Left clockwise">L</button>
+    <button class="prime" onclick="doMove(`L'`)" title="Left counter-clockwise">L'</button>
+    <button onclick="doMove('U')"  title="Up clockwise">U</button>
+    <button class="prime" onclick="doMove(`U'`)" title="Up counter-clockwise">U'</button>
+    <button onclick="doMove('D')"  title="Down clockwise">D</button>
+    <button class="prime" onclick="doMove(`D'`)" title="Down counter-clockwise">D'</button>
+    <button onclick="doMove('F')"  title="Front clockwise">F</button>
+    <button class="prime" onclick="doMove(`F'`)" title="Front counter-clockwise">F'</button>
+    <button onclick="doMove('B')"  title="Back clockwise">B</button>
+    <button class="prime" onclick="doMove(`B'`)" title="Back counter-clockwise">B'</button>
+  </span>
   <span class="separator"></span>
   <button class="action" onclick="scramble()">Scramble</button>
   <button class="action" onclick="resetView()">Reset View</button>
@@ -435,6 +447,10 @@ window.scramble = function() {
     moveQueue.push(moves[Math.floor(Math.random() * moves.length)]);
   }
   processQueue();
+};
+
+window.toggleMoves = function() {
+  document.getElementById('moveGroup').classList.toggle('open');
 };
 
 window.resetView = function() {
@@ -816,12 +832,6 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// ───────────────── Touch: prevent zoom ─────────────────
-renderer.domElement.addEventListener('touchmove', (e) => {
-  if (e.target === renderer.domElement) {
-    e.preventDefault();
-  }
-}, { passive: false });
 
 console.log('🎲 Rubik\'s Cube ready! Drag to orbit, click faces to rotate, or use keyboard shortcuts.');
 </script>
