@@ -341,6 +341,7 @@ clickTargets.push(textSticker);
 
 // ───────────────── Animation State ─────────────────
 let currentAnim = null;
+const ANIM_TIMEOUT_MS = 3000;     // force-finish stuck animation
 
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -604,6 +605,7 @@ let swipeLayerInfo = null;
 let swipePivot = null;
 let swipeAngle = 0;
 let swipeTangent = new THREE.Vector2();
+let owningInteraction = false;    // true when we've claimed a pointer sequence
 
 const SWIPE_THRESHOLD = 5;        // px to enter swipe mode
 const PIXELS_PER_RADIAN = 220;    // swipe sensitivity
@@ -617,7 +619,6 @@ function enterSwipeMode(axis, layer) {
   });
   if (layerCubies.length === 0) return;
 
-  controls.enabled = false;
   swipeActive = true;
   swipeAngle = 0;
 
@@ -669,7 +670,6 @@ function exitSwipeMode(snapTarget) {
       swipePivot = null;
       swipeActive = false;
       swipeLayerInfo = null;
-      controls.enabled = true;
     }
   }
   requestAnimationFrame(snapAnim);
@@ -700,7 +700,6 @@ function onDown(clientX, clientY) {
   if (info) {
     swipeLayerInfo = info;
     highlightLayer(info.axis, info.layer);
-    controls.enabled = false;
   }
 }
 
@@ -731,7 +730,6 @@ function onMove(clientX, clientY) {
     }
     pointerMoved = true;
     unhighlightLayer();
-    controls.enabled = true;
     return;
   }
 
@@ -754,10 +752,7 @@ function onUp(button) {
     return;
   }
 
-  if (pointerMoved) {
-    controls.enabled = true;
-    return;
-  }
+  if (pointerMoved) return;
   if (currentAnim) return;
 
   // Tap to rotate
@@ -770,30 +765,64 @@ function onUp(button) {
     queueMove({ axis: swipeLayerInfo.axis, layer: swipeLayerInfo.layer, angle });
     unhighlightLayer();
     swipeLayerInfo = null;
-    controls.enabled = true;
-  } else {
-    controls.enabled = true;
   }
 }
 
-// ─── Pointer Events (desktop) ───
+// ─── Capture-phase Pointer Events (fires BEFORE OrbitControls) ───
+// When a cubie is hit, stopImmediatePropagation() blocks OrbitControls so
+// it never sees the event — no more race condition with controls.enabled.
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (e.pointerType === 'touch') return; // let touch handlers take over
-  onDown(e.clientX, e.clientY);
-});
+  const info = hitTest(e.clientX, e.clientY);
+  if (info) {
+    e.stopImmediatePropagation();
+    owningInteraction = true;
+    if (e.pointerType !== 'touch') {
+      onDown(e.clientX, e.clientY);
+    }
+  } else {
+    owningInteraction = false;
+  }
+}, { capture: true });
 
 renderer.domElement.addEventListener('pointermove', (e) => {
+  if (owningInteraction) {
+    e.stopImmediatePropagation();
+    if (e.pointerType !== 'touch') {
+      onMove(e.clientX, e.clientY);
+    }
+    return;
+  }
+
+  // Hover detection (desktop only, no interaction in progress)
   if (e.pointerType === 'touch') return;
-  onMove(e.clientX, e.clientY);
-});
+  if (currentAnim || swipeActive) return;
+  const info = hitTest(e.clientX, e.clientY);
+  if (info) {
+    highlightLayer(info.axis, info.layer);
+    renderer.domElement.style.cursor = 'pointer';
+    return;
+  }
+  unhighlightLayer();
+  renderer.domElement.style.cursor = 'grab';
+}, { capture: true });
 
 renderer.domElement.addEventListener('pointerup', (e) => {
-  if (e.pointerType === 'touch') return;
-  onUp(e.button);
-});
+  if (owningInteraction) {
+    e.stopImmediatePropagation();
+    owningInteraction = false;
+    if (e.pointerType !== 'touch') {
+      onUp(e.button);
+    }
+  }
+}, { capture: true });
 
-renderer.domElement.addEventListener('pointerleave', () => {
+// pointerleave is mouse-only, but some mobile browsers synthesize it
+// during touch sequences — guard with pointerType check.
+renderer.domElement.addEventListener('pointerleave', (e) => {
+  if (e.pointerType === 'touch') return;
+  if (!owningInteraction && !swipeActive) return;
+  owningInteraction = false;
   if (swipeActive) {
     const half = Math.PI / 4;
     const target = Math.abs(swipeAngle) > half
@@ -804,7 +833,6 @@ renderer.domElement.addEventListener('pointerleave', () => {
   unhighlightLayer();
   pointerDown = false;
   swipeLayerInfo = null;
-  controls.enabled = true;
 });
 
 // ─── Touch Events (mobile) ───
@@ -824,6 +852,7 @@ renderer.domElement.addEventListener('touchmove', (e) => {
 }, { passive: false });
 
 renderer.domElement.addEventListener('touchend', (e) => {
+  if (e.touches.length > 0) return; // ignore multi-touch lift
   onUp(0);
 });
 
@@ -838,7 +867,6 @@ renderer.domElement.addEventListener('touchcancel', () => {
   unhighlightLayer();
   pointerDown = false;
   swipeLayerInfo = null;
-  controls.enabled = true;
 });
 
 // Prevent browser context menu on canvas (for right-click rotate)
@@ -855,15 +883,23 @@ renderer.setAnimationLoop(() => {
   // Update current animation
   if (currentAnim) {
     currentAnim.elapsed += delta;
-    const progress = Math.min(currentAnim.elapsed / currentAnim.duration, 1);
-    const eased = easeInOutCubic(progress);
 
-    currentAnim.pivot.rotation.set(0, 0, 0);
-    currentAnim.pivot.rotation[currentAnim.axis] = currentAnim.targetAngle * eased;
-
-    if (progress >= 1) {
+    // Safety timeout: force-finish if animation is stuck (e.g., RAF
+    // throttled during mobile touch, corrupting state permanently).
+    if (currentAnim.elapsed >= ANIM_TIMEOUT_MS) {
       finishAnimation();
-      processQueue(); // trigger next queued move
+      processQueue();
+    } else {
+      const progress = Math.min(currentAnim.elapsed / currentAnim.duration, 1);
+      const eased = easeInOutCubic(progress);
+
+      currentAnim.pivot.rotation.set(0, 0, 0);
+      currentAnim.pivot.rotation[currentAnim.axis] = currentAnim.targetAngle * eased;
+
+      if (progress >= 1) {
+        finishAnimation();
+        processQueue(); // trigger next queued move
+      }
     }
   }
 
