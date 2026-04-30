@@ -598,6 +598,7 @@ let pointerDown = false;
 let pointerMoved = false;
 let pointerStart = new THREE.Vector2();
 let pointerLast = new THREE.Vector2();
+let pointerDownTime = 0;
 
 // ─── Swipe state ───
 let swipeActive = false;
@@ -607,8 +608,8 @@ let swipeAngle = 0;
 let swipeTangent = new THREE.Vector2();
 let owningInteraction = false;    // true when we've claimed a pointer sequence
 
-const SWIPE_THRESHOLD = 5;        // px to enter swipe mode
-const PIXELS_PER_RADIAN = 220;    // swipe sensitivity
+const SWIPE_THRESHOLD = 2;        // px to enter swipe mode
+const PIXELS_PER_RADIAN = 130;    // swipe sensitivity (lower = more responsive)
 
 function enterSwipeMode(axis, layer) {
   if (currentAnim) return;
@@ -695,6 +696,7 @@ function onDown(clientX, clientY) {
   pointerMoved = false;
   pointerStart.set(clientX, clientY);
   pointerLast.set(clientX, clientY);
+  pointerDownTime = performance.now();
 
   const info = hitTest(clientX, clientY);
   if (info) {
@@ -720,10 +722,16 @@ function onMove(clientX, clientY) {
     return;
   }
 
-  // Pointer down — check for swipe entry
-  const dx = clientX - pointerStart.x;
-  const dy = clientY - pointerStart.y;
-  if (!swipeActive && !pointerMoved && (Math.abs(dx) > SWIPE_THRESHOLD || Math.abs(dy) > SWIPE_THRESHOLD)) {
+  // Pointer down — check for swipe entry (velocity-aware threshold)
+  const tdx = clientX - pointerStart.x;
+  const tdy = clientY - pointerStart.y;
+  const distance = Math.sqrt(tdx * tdx + tdy * tdy);
+  const elapsed = performance.now() - pointerDownTime;
+  const speed = elapsed > 0 ? distance / elapsed : 0; // px/ms
+  // Fast flick → 1px threshold, slow drag → standard 2px
+  const threshold = speed > 0.3 ? 1 : SWIPE_THRESHOLD;
+
+  if (!swipeActive && !pointerMoved && distance > threshold) {
     if (swipeLayerInfo) {
       enterSwipeMode(swipeLayerInfo.axis, swipeLayerInfo.layer);
       if (swipeActive) return;
